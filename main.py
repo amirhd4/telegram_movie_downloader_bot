@@ -5,6 +5,7 @@ import time
 from datetime import datetime, timedelta
 from typing import List, Optional
 import asyncio
+import aiosqlite
 
 from telegram import (
     Update,
@@ -42,6 +43,8 @@ DB_PATH = os.environ.get('DB_PATH', 'movies_bot.db')
 
 def init_db():
     conn = sqlite3.connect(DB_PATH)
+    conn.execute("PRAGMA journal_mode=WAL;")
+    conn.execute("PRAGMA synchronous=NORMAL;")
     cur = conn.cursor()
     cur.execute('''
     CREATE TABLE IF NOT EXISTS movies (
@@ -73,17 +76,15 @@ def init_db():
     conn.close()
 
 
-def db_execute(query, params=(), fetch=False):
-    conn = sqlite3.connect(DB_PATH)
-    cur = conn.cursor()
-    cur.execute(query, params)
-    if fetch:
-        rows = cur.fetchall()
-        conn.commit()
-        conn.close()
-        return rows
-    conn.commit()
-    conn.close()
+async def db_execute(query, params=(), fetch=False):
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(query, params) as cur:
+            if fetch:
+                rows = await cur.fetchall()
+                await db.commit()
+                return rows
+        await db.commit()
+
 
 # --------- کمکی‌ها ---------
 
@@ -119,7 +120,7 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # بارگذاری اطلاعات فیلم
-    rows = db_execute('SELECT id, title, description, poster_file_id FROM movies WHERE id=?', (movie_id,), fetch=True)
+    rows = await db_execute('SELECT id, title, description, poster_file_id FROM movies WHERE id=?', (movie_id,), fetch=True)
     if not rows:
         await update.message.reply_text('فیلم پیدا نشد؛ ممکن است لینک منقضی شده باشد یا فیلم حذف شده باشد.')
         return
@@ -153,7 +154,7 @@ async def callback_check_members(update: Update, context: ContextTypes.DEFAULT_T
     user = query.from_user
 
     # لیست کانال‌ها را از دیتابیس بخوانید
-    channels = db_execute('SELECT chat_id, title FROM channels', fetch=True)
+    channels = await db_execute('SELECT chat_id, title FROM channels', fetch=True)
     if not channels:
         await query.edit_message_text('فعلاً هیچ کانالی برای بررسی ثبت نشده است. مدیر کانال باید کانال‌ها را با /addchannel ثبت کند.')
         return
@@ -183,7 +184,7 @@ async def callback_check_members(update: Update, context: ContextTypes.DEFAULT_T
 
     # همه عضو بودند => مرحلهٔ دوم
     now = time.time()
-    db_execute('REPLACE INTO user_state (user_id, movie_id, step, started_at) VALUES (?,?,?,?)', (user.id, movie_id, 1, now))
+    await db_execute('REPLACE INTO user_state (user_id, movie_id, step, started_at) VALUES (?,?,?,?)', (user.id, movie_id, 1, now))
 
     text = (
         f'تبریک! شما عضو تمام کانال‌های موردنیاز هستید.\n\n'
@@ -204,7 +205,7 @@ async def callback_check_view(update: Update, context: ContextTypes.DEFAULT_TYPE
     user = query.from_user
 
     # بررسی اینکه ابتدا بررسی عضویت انجام شده باشه (همون state اولیه)
-    rows = db_execute(
+    rows = await db_execute(
         'SELECT step, started_at FROM user_state WHERE user_id=? AND movie_id=?',
         (user.id, movie_id),
         fetch=True,
@@ -238,7 +239,7 @@ async def callback_check_view(update: Update, context: ContextTypes.DEFAULT_TYPE
     await asyncio.sleep(1)  # تأخیر کوتاه برای طبیعی‌تر شدن
 
     # بارگذاری اطلاعات فیلم
-    rows = db_execute('SELECT video_file_id, title FROM movies WHERE id=?', (movie_id,), fetch=True)
+    rows = await db_execute('SELECT video_file_id, title FROM movies WHERE id=?', (movie_id,), fetch=True)
     if not rows:
         await query.edit_message_text('فیلم پیدا نشد.')
         return
@@ -257,7 +258,7 @@ async def callback_check_view(update: Update, context: ContextTypes.DEFAULT_TYPE
         await query.edit_message_text('خطا در ارسال ویدیو. لطفاً با مدیر تماس بگیرید.')
         return
 
-    db_execute('DELETE FROM user_state WHERE user_id=? AND movie_id=?', (user.id, movie_id))
+    await db_execute('DELETE FROM user_state WHERE user_id=? AND movie_id=?', (user.id, movie_id))
 
 # --------- دستورات ادمین برای مدیریت فیلم‌ها و کانال‌ها ---------
 
@@ -271,7 +272,7 @@ async def admin_addchannel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     chat_id = context.args[0]
     title = ' '.join(context.args[1:]) if len(context.args) > 1 else chat_id
-    db_execute('INSERT OR IGNORE INTO channels (chat_id, title) VALUES (?,?)', (chat_id, title))
+    await db_execute('INSERT OR IGNORE INTO channels (chat_id, title) VALUES (?,?)', (chat_id, title))
     await update.message.reply_text(f'کانال ثبت شد: {title} ({chat_id})')
 
 
@@ -280,7 +281,7 @@ async def admin_listchannels(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if not is_admin(user.id):
         await update.message.reply_text('فقط مدیر اجازهٔ این کار را دارد.')
         return
-    rows = db_execute('SELECT chat_id, title FROM channels', fetch=True)
+    rows = await db_execute('SELECT chat_id, title FROM channels', fetch=True)
     if not rows:
         await update.message.reply_text('هیچ کانالی ثبت نشده است.')
         return
@@ -318,7 +319,7 @@ async def admin_addmovie(update: Update, context: ContextTypes.DEFAULT_TYPE):
             poster_id = media_msg.photo[-1].file_id
         # ذخیره در دیتابیس
         now = datetime.utcnow().isoformat()
-        db_execute('INSERT INTO movies (title, description, poster_file_id, video_file_id, created_at) VALUES (?,?,?,?,?)', (title, description, poster_id, file_id, now))
+        await db_execute('INSERT INTO movies (title, description, poster_file_id, video_file_id, created_at) VALUES (?,?,?,?,?)', (title, description, poster_id, file_id, now))
         await update.message.reply_text('فیلم ثبت شد.')
         return
 
@@ -330,7 +331,7 @@ async def admin_listmovies(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(user.id):
         await update.message.reply_text('فقط مدیر اجازهٔ این کار را دارد.')
         return
-    rows = db_execute('SELECT id, title FROM movies ORDER BY id DESC', fetch=True)
+    rows = await db_execute('SELECT id, title FROM movies ORDER BY id DESC', fetch=True)
     if not rows:
         await update.message.reply_text('هیچ فیلمی ثبت نشده است.')
         return
