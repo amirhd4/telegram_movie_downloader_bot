@@ -4,16 +4,14 @@ import logging
 import time
 from datetime import datetime, timedelta
 from typing import List, Optional
+import asyncio
 
 from telegram import (
-    __version__ as ptb_version,
     Update,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
-    InputMediaPhoto,
-    ChatAction,
 )
-from telegram.constants import ParseMode
+from telegram.constants import ParseMode, ChatAction
 from telegram.ext import (
     ApplicationBuilder,
     ContextTypes,
@@ -22,6 +20,8 @@ from telegram.ext import (
     CallbackQueryHandler,
     filters,
 )
+from dotenv import load_dotenv
+load_dotenv()
 
 # --------- تنظیمات و لاگینگ ---------
 logging.basicConfig(
@@ -29,10 +29,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-BOT_TOKEN = os.environ.get('BOT_TOKEN') or 'YOUR_BOT_TOKEN_HERE'
-# لیست آی‌دی ادمین‌ها را با کاما جدا قرار دهید، مثلاً '12345678,87654321'
-ADMIN_IDS = os.environ.get('ADMIN_IDS', '')
-ARCHIVE_CHANNEL_ID = os.environ.get('ARCHIVE_CHANNEL_ID')  # اگر استفاده می‌کنید
+VIEW_CHANNEL_ID = os.environ.get('VIEW_CHANNEL_ID')
+BOT_TOKEN = os.environ.get('BOT_TOKEN')
+ADMIN_IDS = os.environ.get('ADMIN_IDS')
+# ARCHIVE_CHANNEL_ID = os.environ.get('ARCHIVE_CHANNEL_ID')
 
 # پارامترهای قابل تنظیم
 DEFAULT_VIEW_SECONDS = int(os.environ.get('VIEW_SECONDS', '20'))
@@ -126,7 +126,7 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     m_id, title, description, poster_file_id = rows[0]
 
-    text = f"*{title}*\n\n{description}\n\nبرای دسترسی به فایل ابتدا باید مراحل زیر را کامل کنید."
+    text = f"*{title}*\n\n{description}\n\nبرای دسترسی به فایل، باید عضو کانال های زیر شوید."
 
     keyboard = [
         [InlineKeyboardButton('بررسی عضویت', callback_data=f'check_members_{m_id}')],
@@ -159,7 +159,6 @@ async def callback_check_members(update: Update, context: ContextTypes.DEFAULT_T
         return
 
     not_member = []
-    join_links = []
     for chat_id, title in channels:
         try:
             member = await context.bot.get_chat_member(chat_id=chat_id, user_id=user.id)
@@ -168,24 +167,31 @@ async def callback_check_members(update: Update, context: ContextTypes.DEFAULT_T
                 not_member.append((chat_id, title))
         except Exception as e:
             logger.warning(f'خطا در گرفتن وضعیت کاربر برای {chat_id}: {e}')
-            # در صورت خطا فرض می‌کنیم کاربر عضو نیست یا ربات دسترسی ندارد
             not_member.append((chat_id, title))
 
     if not_member:
+        # پیام برای کانال‌هایی که هنوز عضو نیست
         text = 'شما هنوز عضوِ کانال‌های زیر نیستید. لطفاً به آن‌ها ملحق شوید و سپس دوباره روی "بررسی عضویت" بزنید:\n\n'
         for cid, title in not_member:
-            # برای کانال‌های عمومی می‌توان لینک مستقیم ساخت؛ اگر chat_id به شکل @username باشد
             link = f'https://t.me/{cid.lstrip("@")} ' if cid.startswith('@') else f'کانال({cid})'
             text += f'- {title}: {link}\n'
-        await query.edit_message_text(text)
+
+        # دوباره دکمه بررسی عضویت اضافه می‌کنیم
+        keyboard = [[InlineKeyboardButton('بررسی عضویت', callback_data=f'check_members_{movie_id}')]]
+        await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
         return
 
-    # اگر همه عضو بودند => مرحلهٔ دوم
-    # ذخیره وضعیت کاربر: step=1 شروع تایمر
+    # همه عضو بودند => مرحلهٔ دوم
     now = time.time()
     db_execute('REPLACE INTO user_state (user_id, movie_id, step, started_at) VALUES (?,?,?,?)', (user.id, movie_id, 1, now))
 
-    text = f'تبریک! شما عضو تمام کانال‌های موردنیاز هستید.\n\nحالا باید آخرین پست‌های آن کانال(ها) را ببینید. وقتی آماده بودید روی "من پست‌ها را دیدم" بزنید.\n\nبرای جلوگیری از ترفندها، باید حداقل {DEFAULT_VIEW_SECONDS} ثانیه از این لحظه گذشته باشد.'
+    text = (
+        f'تبریک! شما عضو تمام کانال‌های موردنیاز هستید.\n\n'
+        f'حالا باید آخرین پست‌های کانال زیر را ببینید:\n'
+        f'- کانال موردنظر: {VIEW_CHANNEL_ID}\n\n'
+        f'وقتی آماده بودید روی "من پست‌ها را دیدم" بزنید.\n'
+    )
+
     keyboard = [[InlineKeyboardButton('من پست‌ها را دیدم', callback_data=f'check_view_{movie_id}')]]
     await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
 
@@ -197,7 +203,12 @@ async def callback_check_view(update: Update, context: ContextTypes.DEFAULT_TYPE
     movie_id = int(data.split('_')[-1])
     user = query.from_user
 
-    rows = db_execute('SELECT step, started_at FROM user_state WHERE user_id=? AND movie_id=?', (user.id, movie_id), fetch=True)
+    # بررسی اینکه ابتدا بررسی عضویت انجام شده باشه (همون state اولیه)
+    rows = db_execute(
+        'SELECT step, started_at FROM user_state WHERE user_id=? AND movie_id=?',
+        (user.id, movie_id),
+        fetch=True,
+    )
     if not rows:
         await query.edit_message_text('ابتدا باید بررسی عضویت را انجام دهید. لطفاً دوباره از دکمهٔ بررسی عضویت شروع کنید.')
         return
@@ -206,35 +217,46 @@ async def callback_check_view(update: Update, context: ContextTypes.DEFAULT_TYPE
         await query.edit_message_text('وضعیت شما نامعتبر است؛ لطفاً دوباره تلاش کنید.')
         return
 
+    # محاسبهٔ زمان گذشته از لحظهٔ "شروع بازدید"
     elapsed = time.time() - started_at
-    if elapsed < DEFAULT_VIEW_SECONDS:
-        remaining = int(DEFAULT_VIEW_SECONDS - elapsed)
-        await query.answer(f'لطفاً {remaining} ثانیه دیگر صبر کنید و پست‌ها را ببینید.', show_alert=True)
-        return
+    remaining = int(DEFAULT_VIEW_SECONDS - elapsed) if elapsed < DEFAULT_VIEW_SECONDS else 0
+    if remaining > 0:
+        # کاربر زود کلیک زده — هم alert میده هم متن پیام اصلی تغییر میکنه
+        await query.answer(
+            f'شما هنوز 10 پست آخر را بازدید نکرده اید؛ لطفا برگردید و پست‌ها را بازدید کنید.',
+            show_alert=True
+        )
+        text = (f'شما هنوز 10 پست آخر را بازدید نکرده اید؛ لطفا برگردید و پست‌ها را بازدید کنید.\n'
+                f'- کانال موردنظر: {VIEW_CHANNEL_ID}')
 
-    # همه چیز خوب است؛ ارسال فایل
+        keyboard = [[InlineKeyboardButton('من پست‌ها را دیدم', callback_data=f'check_view_{movie_id}')]]
+        return await query.edit_message_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
+
+
+    # الان تایمر تموم شده؛ وانمود کن داریم بررسی میکنیم (ظاهر بهتر)
+    await query.edit_message_text('در حال بررسی مشاهدهٔ پست‌ها... لطفاً کمی صبر کنید.')
+    await asyncio.sleep(1)  # تأخیر کوتاه برای طبیعی‌تر شدن
+
+    # بارگذاری اطلاعات فیلم
     rows = db_execute('SELECT video_file_id, title FROM movies WHERE id=?', (movie_id,), fetch=True)
     if not rows:
         await query.edit_message_text('فیلم پیدا نشد.')
         return
     video_file_id, title = rows[0]
-
     if not video_file_id:
         await query.edit_message_text('فایل ویدیویی برای این فیلم آپلود نشده است. مدیر باید آن را اضافه کند.')
         return
 
-    # ارسال ویدیو
+    # ارسال فیلم (و پاک کردن وضعیت کاربر)
     await query.edit_message_text('در حال ارسال فیلم...')
     try:
-        # اگر فایل خیلی بزرگ است، ارسال ممکن است زمان‌بر باشد؛ در صورت نیاز می‌توانید لینک مستقیم یا روش دیگری استفاده کنید.
         await context.bot.send_chat_action(chat_id=query.from_user.id, action=ChatAction.UPLOAD_VIDEO)
         await context.bot.send_video(chat_id=query.from_user.id, video=video_file_id, caption=f'فیلم: {title}')
-    except Exception as e:
+    except Exception:
         logger.exception('send_video failed')
         await query.edit_message_text('خطا در ارسال ویدیو. لطفاً با مدیر تماس بگیرید.')
         return
 
-    # پاک کردن یا به‌روزرسانی وضعیت کاربر
     db_execute('DELETE FROM user_state WHERE user_id=? AND movie_id=?', (user.id, movie_id))
 
 # --------- دستورات ادمین برای مدیریت فیلم‌ها و کانال‌ها ---------
@@ -280,9 +302,12 @@ async def admin_addmovie(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # مدیر روی پیام ویدیویی یا سند ربات reply می‌کند و در متن عنوان|توضیحات را می‌نویسد
         media_msg = update.message.reply_to_message
         caption_text = update.message.text or ''
+        if caption_text.startswith('/addmovie'):
+            caption_text = caption_text[len('/addmovie'):].strip()
         parts = caption_text.split('|', 1)
         title = parts[0].strip() if parts else 'بدون عنوان'
         description = parts[1].strip() if len(parts) > 1 else ''
+
         # فایل آی‌دی از پیام مرجع
         if media_msg.video:
             file_id = media_msg.video.file_id

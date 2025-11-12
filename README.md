@@ -61,7 +61,7 @@ DB_PATH=movies_bot.db
 ### 3. نصب پیش‌نیازها
 
 ```bash
-pip install python-telegram-bot==20.7
+pip install python-telegram-bot==22.5
 ```
 
 ### 4. اجرای ربات
