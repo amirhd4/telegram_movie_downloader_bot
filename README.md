@@ -1,70 +1,78 @@
-# 🎬 ربات تلگرام مدیریت فیلم‌ها (با مراحل عضویت و مشاهده)
+# 🎬 Telegram Movie Distribution Bot
 
-یک ربات تلگرامی کامل برای مدیریت و توزیع فیلم‌ها با مراحل کنترل عضویت در کانال‌ها و تایید مشاهدهٔ پست‌ها.
-
----
-
-## ✨ ویژگی‌ها
-
-- **لینک مستقیم هر فیلم در کانال** با استفاده از Deep Link (`/start movie_<id>`)
-- **دو مرحله برای دریافت فیلم:**
-  1. بررسی عضویت کاربر در کانال‌های مشخص‌شده
-  2. مشاهدهٔ پست‌ها (با تایمر شبیه‌سازی‌شده)
-- **مدیریت کامل فیلم‌ها و کانال‌ها** توسط مدیر از طریق دستورات ادمین
-- **ذخیره‌سازی داده‌ها** در دیتابیس SQLite (فیلم‌ها، کانال‌ها، کاربران)
-- **پشتیبانی از عکس پوستر و توضیحات فیلم**
-- **کد تمیز، مستند، و قابل توسعه**
+A Telegram bot built with Python that manages and distributes movie content through a controlled access workflow. Users must join required channels and complete a viewing step before receiving access to movie files.
 
 ---
 
-## 🧠 ایدهٔ کلی
+## ✨ Features
 
-برای هر پست در کانال، مدیر یک دکمه قرار می‌دهد که به ربات متصل می‌شود. کاربر با فشردن دکمه وارد ربات شده و مراحل زیر را طی می‌کند:
-
-1. **بررسی عضویت:** کاربر باید در تمامی کانال‌های ثبت‌شده عضو باشد.
-2. **مشاهده پست‌ها:** کاربر باید چند ثانیه منتظر بماند (مثلاً ۲۰ ثانیه) تا شبیه‌سازی مشاهده انجام شود.
-3. پس از تأیید، **فیلم ارسال می‌شود.**
+* Deep-link access for each movie using Telegram start parameters (`/start movie_<id>`)
+* Multi-step access verification process
+* Membership validation across required Telegram channels
+* Simulated post-view confirmation with configurable waiting time
+* Admin tools for managing movies and channels
+* SQLite database for persistent storage
+* Support for movie posters, descriptions, and video files
+* Clean and extensible codebase
 
 ---
 
-## 🧩 ساختار پروژه
+## 🧠 Overview
 
+The bot is designed for controlled movie distribution through Telegram.
+
+For each movie, administrators can generate a unique deep link and place it inside channel posts. When a user clicks the link, the bot guides them through the following process:
+
+1. Verify membership in all required channels.
+2. Complete a viewing/waiting step.
+3. Receive access to the requested movie.
+
+---
+
+## 🧩 Project Structure
+
+```text
+project/
+ ├── main.py                # Main bot application
+ ├── movies_bot.db          # SQLite database (auto-generated)
+ ├── README.md              # Documentation
 ```
-📁 project/
- ├── main.py                ← فایل اصلی ربات (شامل همهٔ منطق)
- ├── movies_bot.db          ← دیتابیس SQLite (به‌صورت خودکار ساخته می‌شود)
- ├── README.md              ← این فایل
-```
 
 ---
 
-## ⚙️ تنظیمات اولیه
+## ⚙️ Setup
 
-### 1. ساخت ربات
-از طریق [@BotFather](https://t.me/BotFather) یک ربات بسازید و **توکن** را بگیرید.
+### 1. Create a Telegram Bot
 
-### 2. متغیرهای محیطی
+Create a bot using @BotFather and obtain your bot token.
 
-در فایل `.env` یا محیط سیستم:
+### 2. Environment Variables
 
-```
+Create a `.env` file or define the following environment variables:
+
+```env
 BOT_TOKEN=your_bot_token_here
 ADMIN_IDS=123456789,987654321
 VIEW_SECONDS=20
 DB_PATH=movies_bot.db
 ```
 
-- `BOT_TOKEN`: توکن ربات از BotFather
-- `ADMIN_IDS`: لیست آی‌دی ادمین‌ها (جداشده با کاما)
-- `VIEW_SECONDS`: مدت زمان انتظار برای مشاهده پست‌ها (اختیاری)
+| Variable     | Description                               |
+| ------------ | ----------------------------------------- |
+| BOT_TOKEN    | Telegram bot token                        |
+| ADMIN_IDS    | Comma-separated list of administrator IDs |
+| VIEW_SECONDS | Waiting time before content delivery      |
+| DB_PATH      | SQLite database path                      |
 
-### 3. نصب پیش‌نیازها
+---
+
+### 3. Install Dependencies
 
 ```bash
 pip install python-telegram-bot==22.5
 ```
 
-### 4. اجرای ربات
+### 4. Run the Bot
 
 ```bash
 python main.py
@@ -72,54 +80,68 @@ python main.py
 
 ---
 
-## 🛠 دستورات ادمین‌ها
+## 🛠 Admin Commands
 
-| دستور | توضیح |
-|:--|:--|
-| `/addchannel <@username یا chat_id> <عنوان>` | ثبت کانال جدید برای بررسی عضویت |
-| `/listchannels` | نمایش لیست کانال‌های ثبت‌شده |
-| `/addmovie` | ثبت فیلم جدید (به پیام ویدیویی رپلای کنید و دستور را بنویسید) |
-| `/listmovies` | لیست فیلم‌ها و لینک‌های deep link |
-
----
-
-## 📲 طرز کار کاربر
-
-1. کاربر روی دکمهٔ فیلم در پست کانال کلیک می‌کند.  
-2. وارد ربات می‌شود → بررسی عضویت را انجام می‌دهد.  
-3. اگر عضو تمام کانال‌ها بود → مرحلهٔ مشاهده فعال می‌شود.  
-4. بعد از گذشت مثلاً ۲۰ ثانیه → فیلم برای او ارسال می‌شود.
+| Command                                      | Description                                |
+| -------------------------------------------- | ------------------------------------------ |
+| `/addchannel <@username or chat_id> <title>` | Register a required channel                |
+| `/listchannels`                              | Display registered channels                |
+| `/addmovie`                                  | Add a movie by replying to a video message |
+| `/listmovies`                                | Show all movies and generated deep links   |
 
 ---
 
-## 📦 ساخت دکمه در کانال
+## 📲 User Workflow
 
-برای هر فیلم در کانال، مدیر می‌تواند از لینک زیر در دکمه استفاده کند:
+1. User clicks a movie button inside a Telegram channel.
+2. The bot verifies channel memberships.
+3. If all requirements are met, the viewing step becomes available.
+4. After the configured waiting period, the movie is delivered.
 
-```
+---
+
+## 📦 Deep Link Format
+
+Administrators can create movie buttons using:
+
+```text
 https://t.me/<bot_username>?start=movie_<ID>
 ```
 
-شناسهٔ `<ID>` از دستور `/listmovies` به‌دست می‌آید.
+The movie ID can be obtained from the `/listmovies` command.
 
 ---
 
-## 💾 دیتابیس
+## 💾 Database
 
-### جدول‌ها:
-- **movies** → اطلاعات فیلم‌ها (عنوان، توضیحات، پوستر، ویدیو)
-- **channels** → لیست کانال‌های موردنیاز برای عضویت
-- **user_state** → وضعیت موقت کاربر در مراحل مشاهده
+### Tables
+
+* `movies` – Movie metadata, posters, descriptions, and video references
+* `channels` – Required channels for membership verification
+* `user_state` – Temporary user workflow state
 
 ---
 
-## 🧱 ساختار کد
+## 🧱 Main Components
 
-فایل اصلی `main.py` شامل بخش‌های زیر است:
+* `init_db()` – Database initialization
+* `start_handler()` – Deep-link entry point
+* `callback_check_members()` – Membership verification
+* `callback_check_view()` – Waiting-step validation and movie delivery
+* Admin management commands
+* `main()` – Bot startup and polling
 
-- **init_db()** → ایجاد جداول
-- **start_handler()** → شروع تعامل کاربر (Deep Link)
-- **callback_check_members()** → بررسی عضویت کاربر
-- **callback_check_view()** → کنترل تایمر و ارسال فیلم
-- **دستورات مدیریتی** برای کانال‌ها و فیلم‌ها
-- **main()** → راه‌اندازی اپلیکیشن و polling
+---
+
+## 🚀 Technologies Used
+
+* Python
+* python-telegram-bot
+* SQLite
+* Telegram Bot API
+
+---
+
+## License
+
+This project is intended for educational and demonstration purposes.
